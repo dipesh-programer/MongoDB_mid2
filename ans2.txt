@@ -1,0 +1,148 @@
+# EXPERIMENT B4: TICKET BOOKING BACKUP AND RESTORE
+
+# Replica Set Connection
+$uri = "mongodb://localhost:27017,localhost:27018,localhost:27019/?replicaSet=rs0"
+
+# Backup Location
+$backup = "C:\backups\ticket_full"
+
+# Create backup parent folder
+New-Item -ItemType Directory -Force -Path "C:\backups" | Out-Null
+
+# INITIAL SETUP: INSERT BOOKING DATA
+Write-Host "`n===== INITIAL DATA INSERTION ====="
+
+mongosh $uri --quiet --eval '
+const c = db.getSiblingDB("ticketDB").bookings;
+c.deleteMany({});
+c.insertMany([
+{_id:1, passenger:"Anand", route:"Chennai-Madurai", seats:2},
+{_id:2, passenger:"Bhuvana", route:"Chennai-Coimbatore", seats:1},
+{_id:3, passenger:"Chandru", route:"Madurai-Trichy", seats:3},
+{_id:4, passenger:"Divya", route:"Salem-Chennai", seats:1},
+{_id:5, passenger:"Elango", route:"Chennai-Trichy", seats:2}
+]);
+print("Total bookings: " + c.countDocuments());
+'
+
+# TASK 1: TAKE FULL BACKUP OF REPLICA SET
+Write-Host "`n===== TASK 1: FULL BACKUP ====="
+
+mongodump --uri="$uri" --readPreference=secondaryPreferred --oplog --out="$backup"
+
+# TASK 2: VERIFY BACKUP FILES
+Write-Host "`n===== TASK 2: VERIFY BACKUP FILES ====="
+
+if (Test-Path "$backup\ticketDB\bookings.bson") {
+    Write-Host "ticket_full: true"
+    Write-Host "Backup files:"
+    Get-ChildItem "$backup" -Recurse
+} else {
+    Write-Host "Backup file not found. Check mongodump output."
+    exit 1
+}
+
+# TASK 3: SIMULATE DISASTER
+Write-Host "`n===== TASK 3: SIMULATE DISASTER ====="
+
+mongosh $uri --quiet --eval '
+db.getSiblingDB("ticketDB").bookings.drop();
+print("Collection dropped successfully");
+print("Remaining documents: " +
+db.getSiblingDB("ticketDB").bookings.countDocuments());
+'
+
+# TASK 4: RESTORE COLLECTION
+Write-Host "`n===== TASK 4: RESTORE COLLECTION ====="
+
+mongorestore --uri="$uri" --nsInclude="ticketDB.bookings" --drop "$backup"
+
+# TASK 5: VERIFY RESTORED DATA
+Write-Host "`n===== TASK 5: VERIFY RESTORED DATA ====="
+
+mongosh $uri --quiet --eval '
+const c = db.getSiblingDB("ticketDB").bookings;
+print("Restored document count: " + c.countDocuments());
+printjson(c.find({}, {_id:0}).toArray());
+'
+
+Write-Host "`n===== EXPERIMENT COMPLETED ====="
+
+
+
+
+
+output
+
+
+
+===== TASK 1: FULL BACKUP =====
+
+writing ticketDB.bookings to
+C:\backups\ticket_full\ticketDB\bookings.bson
+
+done dumping ticketDB.bookings (5 documents)
+
+writing captured oplog to
+C:\backups\ticket_full\oplog.bson
+
+===== TASK 2: VERIFY BACKUP FILES =====
+
+ticket_full: true
+
+Backup files:
+
+ticketDB
+    bookings.bson
+    bookings.metadata.json
+
+oplog.bson
+
+===== TASK 3: SIMULATE DISASTER =====
+
+Collection dropped successfully
+
+Remaining documents: 0
+
+===== TASK 4: RESTORE COLLECTION =====
+
+restoring ticketDB.bookings from
+C:\backups\ticket_full\ticketDB\bookings.bson
+
+finished restoring ticketDB.bookings
+(5 documents, 0 failures)
+
+5 document(s) restored successfully.
+0 document(s) failed to restore.
+
+===== TASK 5: VERIFY RESTORED DATA =====
+
+Restored document count: 5
+
+[
+  {
+    passenger: 'Anand',
+    route: 'Chennai-Madurai',
+    seats: 2
+  },
+  {
+    passenger: 'Bhuvana',
+    route: 'Chennai-Coimbatore',
+    seats: 1
+  },
+  {
+    passenger: 'Chandru',
+    route: 'Madurai-Trichy',
+    seats: 3
+  },
+  {
+    passenger: 'Divya',
+    route: 'Salem-Chennai',
+    seats: 1
+  },
+  {
+    passenger: 'Elango',
+    route: 'Chennai-Trichy',
+    seats: 2
+  }
+]
