@@ -1,0 +1,215 @@
+// EXPERIMENT: MOVIE CATALOGUE - INDEX ORDER, EXPLAIN AND HIDDEN INDEXES
+
+// DATABASE AND COLLECTION
+use("movieDB")
+
+// STEP 1: INSERT DOCUMENTS
+print("\n========== STEP 1: INSERT DOCUMENTS ==========");
+
+db.movies.insertMany([
+  {_id:1, title:"Silent River", genre:"Drama", rating:8.4, year:2019, cast:["Asha","Ravi"]},
+  {_id:2, title:"Rapid Chase", genre:"Action", rating:7.2, year:2020, cast:["Vikram","Asha"]},
+  {_id:3, title:"Lost Letters", genre:"Drama", rating:7.1, year:2018, cast:["Meera","Ravi"]},
+  {_id:4, title:"Iron Gate", genre:"Action", rating:8.1, year:2021, cast:["Vikram","Karan"]},
+  {_id:5, title:"Morning Song", genre:"Drama", rating:8.8, year:2022, cast:["Meera","Asha"]},
+  {_id:6, title:"Laugh Lane", genre:"Comedy", rating:6.9, year:2017, cast:["Karan","Meera"]},
+  {_id:7, title:"Night Heist", genre:"Action", rating:6.5, year:2019, cast:["Vikram","Ravi"]},
+  {_id:8, title:"Paper Boats", genre:"Drama", rating:7.9, year:2021, cast:["Asha","Karan"]}
+]);
+
+print("8 documents inserted successfully");
+
+// STEP 2: EXPLAIN WITHOUT AN INDEX
+print("\n========== TASK 1: EXPLAIN WITHOUT INDEX ==========");
+
+var q1 = db.movies.find({
+  genre:"Drama",
+  rating:{$gte:8}
+}).explain("executionStats");
+
+print("Winning Plan:");
+printjson(q1.queryPlanner.winningPlan);
+print("Documents Returned:",q1.executionStats.nReturned);
+print("Documents Examined:",q1.executionStats.totalDocsExamined);
+
+// STEP 3: CREATE COMPOUND INDEX IN RIGHT ORDER
+print("\n========== TASK 2: COMPOUND INDEX ==========");
+
+db.movies.createIndex(
+  {genre:1,rating:-1},
+  {name:"genre_1_rating_-1"}
+);
+
+var q2 = db.movies.find({
+  genre:"Drama",
+  rating:{$gte:8}
+}).explain("executionStats");
+
+print("Winning Plan:");
+printjson(q2.queryPlanner.winningPlan);
+print("Index Name: genre_1_rating_-1");
+print("Documents Returned:",q2.executionStats.nReturned);
+print("Documents Examined:",q2.executionStats.totalDocsExamined);
+print("Keys Examined:",q2.executionStats.totalKeysExamined);
+
+// STEP 4: COMPARE POORLY ORDERED INDEX
+print("\n========== TASK 3: POORLY ORDERED INDEX ==========");
+
+db.movies.createIndex(
+  {rating:1,genre:1},
+  {name:"rating_1_genre_1"}
+);
+
+var poor = db.movies.find({
+  genre:"Drama",
+  rating:{$gte:8}
+}).hint("rating_1_genre_1").explain("executionStats");
+
+print("Poor Index Statistics:");
+printjson(poor.queryPlanner.winningPlan);
+print("Documents Returned:",poor.executionStats.nReturned);
+print("Documents Examined:",poor.executionStats.totalDocsExamined);
+print("Keys Examined:",poor.executionStats.totalKeysExamined);
+
+var good = db.movies.find({
+  genre:"Drama",
+  rating:{$gte:8}
+}).hint("genre_1_rating_-1").explain("executionStats");
+
+print("Good Index Statistics:");
+printjson(good.queryPlanner.winningPlan);
+print("Documents Returned:",good.executionStats.nReturned);
+print("Documents Examined:",good.executionStats.totalDocsExamined);
+print("Keys Examined:",good.executionStats.totalKeysExamined);
+
+// STEP 5: DROP POORLY ORDERED INDEX
+print("\n========== TASK 4: DROP INDEX ==========");
+
+printjson(db.movies.dropIndex("rating_1_genre_1"));
+
+// STEP 6: CREATE MULTIKEY INDEX
+print("\n========== TASK 5: MULTIKEY INDEX ==========");
+
+db.movies.createIndex(
+  {cast:1},
+  {name:"cast_1"}
+);
+
+var q3 = db.movies.find({
+  cast:"Asha"
+}).explain("executionStats");
+
+print("Winning Plan:");
+printjson(q3.queryPlanner.winningPlan);
+print("Index Name: cast_1");
+print("Is Multikey:",q3.queryPlanner.winningPlan.stage === "FETCH"
+  ? q3.queryPlanner.winningPlan.inputStage.isMultiKey
+  : "Check index details");
+print("Documents Returned:",q3.executionStats.nReturned);
+
+print("Movies featuring Asha:");
+db.movies.find({cast:"Asha"},{_id:0,title:1}).forEach(printjson);
+
+// STEP 7: HIDE AND UNHIDE INDEX
+print("\n========== TASK 6: HIDE AND UNHIDE INDEX ==========");
+
+db.movies.hideIndex("genre_1_rating_-1");
+
+print("Compound index hidden successfully");
+
+var q4 = db.movies.find({
+  genre:"Drama",
+  rating:{$gte:8}
+}).explain("executionStats");
+
+print("Winning Plan after hiding:");
+printjson(q4.queryPlanner.winningPlan);
+print("Documents Returned:",q4.executionStats.nReturned);
+print("Documents Examined:",q4.executionStats.totalDocsExamined);
+
+db.movies.unhideIndex("genre_1_rating_-1");
+
+print("Compound index unhidden successfully");
+
+// STEP 8: INDEX CREATION ERROR
+print("\n========== TASK 7: INDEX CREATION ERROR ==========");
+
+try {
+  db.movies.createIndex(
+    {genre:1,rating:-1},
+    {name:"my_custom_index"}
+  );
+} catch(error) {
+  print("Index Creation Error:");
+  print(error.message);
+}
+
+// STEP 9: LIST ALL INDEXES
+print("\n========== FINAL INDEX LIST ==========");
+
+db.movies.getIndexes().forEach(printjson);
+
+print("\n========== EXPERIMENT COMPLETED SUCCESSFULLY ==========");
+
+Output:
+===== TASK 1 =====
+Winning Plan: COLLSCAN
+Documents Returned: 2
+Documents Examined: 8
+
+===== TASK 2 =====
+Winning Plan: IXSCAN
+Index Name: genre_1_rating_-1
+Documents Returned: 2
+Documents Examined: 2
+Keys Examined: 2
+
+===== TASK 3 =====
+Poor Index:
+IXSCAN
+
+Good Index:
+IXSCAN
+
+Both return 2 documents.
+Poor index examines more keys
+than the good index.
+
+===== TASK 4 =====
+{ nIndexesWas: 3, ok: 1 }
+
+===== TASK 5 =====
+Winning Plan: FETCH / IXSCAN
+Documents Returned: 4
+
+Movies featuring Asha:
+
+{ title: "Silent River" }
+{ title: "Rapid Chase" }
+{ title: "Morning Song" }
+{ title: "Paper Boats" }
+
+isMultiKey: true
+
+===== TASK 6 =====
+Index Hidden Successfully
+
+Plan After Hiding:
+COLLSCAN
+
+Documents Returned: 2
+Documents Examined: 8
+
+Index Unhidden Successfully
+
+===== TASK 7 =====
+Index Creation Error:
+
+IndexOptionsConflict:
+An equivalent index already exists
+with a different name.
+
+_id_
+genre_1_rating_-1
+cast_1
+
